@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 import { program } from 'commander';
 import sqlite3 from 'sqlite3';
 import fs from 'fs';
@@ -12,43 +11,45 @@ const COLUMNS = new Map([
     ['score', 'NUMERIC'],
     ['selftext', 'TEXT'],
     ['title', 'TEXT'],
-    ['url', 'TEXT']
+    ['url', 'TEXT'],
+    ['author', 'TEXT']
 ]);
 
 program
     .requiredOption('-i, --input <file>', 'Input JSON file path')
     .requiredOption('-o, --output <file>', 'Output SQLite database file path')
     .option('-t, --table <name>', 'Table name in SQLite database', 'data')
-    .option('-b, --batch-size <size>', 'Number of records to process in each batch', '1000')
+    .option('-b, --batch-size <size>', 'Number of records to process in each batch', '10000')
     .parse(process.argv);
 
 const options = program.opts();
 const BATCH_SIZE = parseInt(options.batchSize, 10);
 
-console.log('Input file:', options.input);
-console.log('Output file:', options.output);
-console.log('Table name:', options.table);
-console.log('Batch size:', BATCH_SIZE);
+console.log('📚 Configuration:');
+console.log(`   📥 Input: ${options.input}`);
+console.log(`   📦 Output: ${options.output}`);
+console.log(`   📋 Table: ${options.table}`);
+console.log(`   🔄 Batch size: ${BATCH_SIZE}`);
 
 async function processData() {
     return new Promise((resolve, reject) => {
         const db = new sqlite3.Database(options.output);
         let processCount = 0;
-        let batch = [];
-
+        
+        // Create table
         const schema = Array.from(COLUMNS.entries())
             .map(([name, type]) => `"${name}" ${type}`)
             .join(', ');
         
-        console.log('\nCreating table with schema:');
-        const createTableSQL = `CREATE TABLE IF NOT EXISTS "${options.table}" (${schema})`;
-        console.log('SQL:', createTableSQL);
-        db.exec(createTableSQL);
-        
+        console.log('\n🔨 Initializing database structures...');
+        db.exec(`DROP TABLE IF EXISTS "${options.table}"`);
+        db.exec(`CREATE TABLE "${options.table}" (${schema})`);
+
         const columnNames = Array.from(COLUMNS.keys());
-        const insertSQL = `INSERT INTO "${options.table}" ("${columnNames.join('", "')}") VALUES (${Array(columnNames.length).fill('?').join(', ')})`;
-        console.log('Prepared SQL:', insertSQL);
-        const stmt = db.prepare(insertSQL);
+        const stmt = db.prepare(
+            `INSERT INTO "${options.table}" ("${columnNames.join('", "')}") 
+             VALUES (${Array(columnNames.length).fill('?').join(', ')})`
+        );
 
         db.exec('BEGIN TRANSACTION');
 
@@ -59,47 +60,56 @@ async function processData() {
 
         rl.on('line', (line) => {
             if (!line.trim()) return;
-
             try {
                 const record = JSON.parse(line);
                 const values = columnNames.map(key => record[key] ?? null);
                 stmt.run(values);
                 processCount++;
-
-                if (processCount % 10000 === 0) {
+                
+                if (processCount % BATCH_SIZE === 0) {
                     db.exec('COMMIT');
                     db.exec('BEGIN TRANSACTION');
-                    console.log(`Processed ${processCount} records`);
+                    console.log(`✨ Processed ${processCount.toLocaleString()} records`);
                 }
             } catch (err) {
-                console.error('Error processing line:', err);
+                console.error('❌ Error processing record:', err);
             }
         });
 
         rl.on('close', () => {
             stmt.finalize();
             db.exec('COMMIT');
-            console.log(`\nComplete. Processed ${processCount} records`);
-            db.close();
-            resolve();
+            
+            console.log(`\n🎉 Success! Processed ${processCount.toLocaleString()} records`);
+            
+            db.close((err) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(processCount);
+                }
+            });
         });
 
         rl.on('error', (err) => {
-            console.error('Reader error:', err);
+            console.error('❌ Fatal error:', err);
+            rl.close();
             stmt.finalize();
             db.exec('ROLLBACK');
-            db.close();
-            reject(err);
+            db.close((closeErr) => {
+                reject(err || closeErr);
+            });
         });
     });
 }
 
 async function main() {
     try {
-        await processData();
-        console.log('All done!');
+        const count = await processData();
+        console.log('✨ All done! Database is ready.');
+        process.exit(0);
     } catch (err) {
-        console.error('Error:', err);
+        console.error('❌ Fatal error:', err);
         process.exit(1);
     }
 }

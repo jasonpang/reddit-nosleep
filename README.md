@@ -8,3 +8,7 @@ Convert a ZST file to a queryable SQLite database.
 4. Double check the number of submissions: `jq -s length nosleep_submissions.json`
 5. Run the conversion script: `/json-to-sqlite.js -i nosleep_submissions.json -o nosleep.sqlite`
 6. Open up the SQLite in your favorite editor.
+
+### Examples
+
+`SELECT author,title from data where title like '%train%17%'`
